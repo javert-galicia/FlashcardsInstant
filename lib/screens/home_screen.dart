@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:math';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import '../models/flashcard.dart';
 import '../models/topic.dart';
 import '../services/storage_service.dart';
@@ -380,27 +382,221 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }  Future<void> _exportToCSV() async {
+    try {
+      if (_topics.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No flashcards to export'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
+      final String csv = 'Topic,Question,Answer\n' +
+          _topics.map((topic) {
+            return topic.cards.map((card) {
+              // Escape quotes and commas in the content
+              final topicName = topic.name.replaceAll('"', '""');
+              final question = card.question.replaceAll('"', '""');
+              final answer = card.answer.replaceAll('"', '""');
+              return '"$topicName","$question","$answer"';
+            }).join('\n');
+          }).join('\n');
+      
+      final directory = await getApplicationDocumentsDirectory();
+      final now = DateTime.now().toIso8601String().replaceAll(':', '-');
+      final filePath = '${directory.path}/flashcards_$now.csv';
+      
+      await File(filePath).writeAsString(csv);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Flashcards exported to:\n$filePath'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error exporting flashcards: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importFromCSV() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final files = directory.listSync().where((file) => 
+        file.path.toLowerCase().endsWith('.csv')).toList();
+      
+      if (files.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No CSV files found in documents directory'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Show dialog to select a file
+      if (!mounted) return;
+      final file = await showDialog<File>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Select CSV file to import'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: files.length,
+              itemBuilder: (context, index) {
+                final file = files[index];
+                final fileName = file.path.split(Platform.pathSeparator).last;
+                return ListTile(
+                  title: Text(fileName),
+                  onTap: () => Navigator.of(context).pop(file as File),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+
+      if (file == null) return;
+      
+      final contents = await file.readAsString();
+      final lines = contents.split('\n');
+      
+      // Skip header
+      if (lines.length > 1) {
+        var importedCards = 0;
+        for (var i = 1; i < lines.length; i++) {
+          final line = lines[i].trim();
+          if (line.isEmpty) continue;
+          
+          // Parse CSV line considering quoted values
+          final values = line.split(',').map((value) {
+            value = value.trim();
+            if (value.startsWith('"') && value.endsWith('"')) {
+              value = value.substring(1, value.length - 1).replaceAll('""', '"');
+            }
+            return value;
+          }).toList();
+
+          if (values.length == 3) {
+            final topicName = values[0];
+            final question = values[1];
+            final answer = values[2];
+
+            // Find or create topic
+            var topic = _topics.firstWhere(
+              (t) => t.name == topicName,
+              orElse: () {
+                final newTopic = Topic(
+                  id: _uuid.v4(),
+                  name: topicName,
+                  color: Colors.primaries[_topics.length % Colors.primaries.length],
+                  icon: Icons.folder,
+                );
+                setState(() {
+                  _topics.add(newTopic);
+                });
+                return newTopic;
+              },
+            );
+
+            // Add flashcard
+            setState(() {
+              topic.cards.add(
+                Flashcard(
+                  id: _uuid.v4(),
+                  question: question,
+                  answer: answer,
+                  createdAt: DateTime.now(),
+                ),
+              );
+            });
+            importedCards++;
+          }
+        }
+        await _saveTopics();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Successfully imported $importedCards flashcards'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error importing flashcards: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(      appBar: AppBar(        title: Text(_selectedTopic?.name ?? 'Flashcards Instant'),
         backgroundColor: _selectedTopic?.color ?? Theme.of(context).colorScheme.primary,
-        foregroundColor: Theme.of(context).colorScheme.onPrimary,
-        actions: [
+        foregroundColor: Theme.of(context).colorScheme.onPrimary,        actions: [
           IconButton(
             icon: Icon(widget.isDarkMode ? Icons.light_mode : Icons.dark_mode),
             tooltip: widget.isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode',
             onPressed: widget.onThemeToggle,
+          ),          IconButton(
+            icon: const Icon(Icons.table_chart),
+            tooltip: 'Import/Export CSV',
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Import/Export CSV'),
+                  content: const Text('Choose whether to import or export flashcards as CSV'),
+                  actions: [
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _importFromCSV();
+                      },
+                      child: const Text('Import'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _exportToCSV();
+                      },
+                      child: const Text('Export'),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.info_outline),
-            tooltip: 'About',
-            onPressed: () {              showAboutDialog(
+            tooltip: 'About',            onPressed: () {              showAboutDialog(
                 context: context,
                 applicationName: 'Flashcards Instant',
                 applicationVersion: '1.0.0',
-                applicationIcon: const FlutterLogo(size: 64),
+                applicationIcon: Image.asset('assets/app_icon.png', width: 64, height: 64),
                 children: [
                   const Text(
                     '© 2025 Javert Galicia\n'

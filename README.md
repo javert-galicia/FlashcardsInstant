@@ -10,10 +10,16 @@ A modern and instant flashcards applicationbuilt with Flutter. Perfect for stude
 - 📱 Responsive design that works on all devices
 - 💾 Local storage for persistent data
 - 🎨 Material Design 3 with beautiful UI
+- 📊 Import/Export flashcards via CSV
+- 🌙 Dark mode support
 
 ## Getting Started
 
-1. Clone the repository
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/javert-galicia/FlashcardsInstant.git
+   cd FlashcardsInstant
+   ```
 2. Install Flutter if you haven't already
 3. Run `flutter pub get` to install dependencies
 4. Run `flutter run` to start the app
